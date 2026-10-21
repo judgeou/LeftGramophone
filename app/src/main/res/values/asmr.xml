@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_asmr">ASMR</string>
+    <string name="settings_asmr_ear_preference">Automatic channel swapping</string>
+    <string name="settings_asmr_ear_preference_off">Off</string>
+    <string name="settings_asmr_ear_preference_left">Prefer left ear</string>
+    <string name="settings_asmr_ear_preference_right">Prefer right ear</string>
+    <string name="settings_asmr_ear_preference_desc">For stereo audio, automatically swaps left and right when the other side is noticeably louder, with a smooth transition. Quiet or balanced passages keep their current routing. Changes apply during playback. Loudness detection may not identify every ASMR trigger.</string>
+    <string-array name="asmr_ear_preference_entries" translatable="false">
+        <item>@string/settings_asmr_ear_preference_off</item>
+        <item>@string/settings_asmr_ear_preference_left</item>
+        <item>@string/settings_asmr_ear_preference_right</item>
+    </string-array>
+    <string-array name="asmr_ear_preference_values" translatable="false">
+        <item>off</item>
+        <item>left</item>
+        <item>right</item>
+    </string-array>
+</resources>

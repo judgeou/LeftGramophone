@@ -5,6 +5,16 @@ plugins {
     id("com.android.built-in-kotlin")
 }
 
+// Use matching CI-built JNI libraries when building without a local NDK.
+val prebuiltNativeLibs = providers.gradleProperty("hificorePrebuiltDir").orNull
+    ?.let { rootProject.file(it) }
+if (prebuiltNativeLibs != null) {
+    require(prebuiltNativeLibs.isDirectory && prebuiltNativeLibs.walkTopDown()
+        .any { it.name == "libhificore.so" }) {
+        "hificorePrebuiltDir must contain ABI directories with libhificore.so"
+    }
+}
+
 android {
     namespace = "org.nift4.gramophone.hificore"
     compileSdk = 37
@@ -13,9 +23,11 @@ android {
         minSdk = 23
 
         consumerProguardFiles("consumer-rules.pro")
-        externalNativeBuild {
-            cmake {
-                cppFlags("")
+        if (prebuiltNativeLibs == null) {
+            externalNativeBuild {
+                cmake {
+                    cppFlags("")
+                }
             }
         }
     }
@@ -30,18 +42,26 @@ android {
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
     }
-    externalNativeBuild {
-        cmake {
-            path("src/main/cpp/CMakeLists.txt")
-            version = "3.22.1"
+    if (prebuiltNativeLibs == null) {
+        externalNativeBuild {
+            cmake {
+                path("src/main/cpp/CMakeLists.txt")
+                version = "3.22.1"
+            }
         }
+    } else {
+        // Use the base source-set type with the project's legacy Android DSL.
+        (this as com.android.build.gradle.BaseExtension).sourceSets
+            .getByName("main").jniLibs.srcDir(prebuiltNativeLibs)
+        // The CI libraries are already stripped; avoid invoking NDK strip tools.
+        packaging.jniLibs.keepDebugSymbols += "**/*.so"
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_21
         targetCompatibility = JavaVersion.VERSION_21
     }
     buildFeatures {
-        prefab = true
+        prefab = prebuiltNativeLibs == null
     }
 }
 

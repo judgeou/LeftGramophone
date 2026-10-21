@@ -238,6 +238,11 @@ class SongAdapter(
 
     override fun onMenu(item: MediaItem, popupMenu: PopupMenu) {
         popupMenu.inflate(R.menu.more_menu)
+        if (item.mediaId.startsWith("asmr:")) {
+            // These operations require a MediaStore row or an on-device file.
+            listOf(R.id.album, R.id.artist, R.id.details, R.id.delete, R.id.add_to_playlist, R.id.share)
+                .forEach { popupMenu.menu.findItem(it)?.isVisible = false }
+        }
 
         popupMenu.setOnMenuItemClickListener { it1 ->
             when (it1.itemId) {

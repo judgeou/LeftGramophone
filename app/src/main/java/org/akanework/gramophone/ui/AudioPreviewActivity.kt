@@ -75,6 +75,7 @@ import org.akanework.gramophone.logic.startAnimation
 import org.akanework.gramophone.logic.ui.BaseActivity
 import org.akanework.gramophone.logic.ui.placeholderScaleToFit
 import org.akanework.gramophone.logic.utils.CalculationUtils.convertDurationToTimeStamp
+import org.akanework.gramophone.logic.utils.EarPreferenceAudioProcessor
 import org.akanework.gramophone.logic.utils.Flags
 import org.akanework.gramophone.logic.utils.ReplayGainAudioProcessor
 import org.akanework.gramophone.logic.utils.exoplayer.GramophoneExtractorsFactory
@@ -95,6 +96,8 @@ class AudioPreviewActivity : BaseActivity(), View.OnClickListener {
 
     private lateinit var d: AlertDialog
     private lateinit var player: ExoPlayer
+    private val rgAp = ReplayGainAudioProcessor()
+    private val earPreferenceAp = EarPreferenceAudioProcessor()
     private lateinit var audioTitle: TextView
     private lateinit var artistTextView: TextView
     private lateinit var currentPositionTextView: TextView
@@ -132,6 +135,28 @@ class AudioPreviewActivity : BaseActivity(), View.OnClickListener {
     private val prefChangeListener = SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
             "default_progress_bar" -> updateSliderVisibility()
+            "asmr_ear_preference" -> updateEarPreference()
+        }
+    }
+
+    private fun updateEarPreference() {
+        earPreferenceAp.mode = EarPreferenceAudioProcessor.Mode.fromPreference(
+            prefs.getStringStrict("asmr_ear_preference", "off")
+        )
+        if (::player.isInitialized) {
+            val config = prefs.getStringStrict("offload", "0")?.toIntOrNull() ?: 0
+            val offload = Flags.OFFLOAD && config > 0 &&
+                earPreferenceAp.mode == EarPreferenceAudioProcessor.Mode.OFF
+            rgAp.setOffloadEnabled(offload)
+            player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                .setAudioOffloadPreferences(
+                    TrackSelectionParameters.AudioOffloadPreferences.Builder()
+                        .setAudioOffloadMode(if (offload)
+                            TrackSelectionParameters.AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_ENABLED
+                            else TrackSelectionParameters.AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_DISABLED)
+                        .setIsGaplessSupportRequired(config == 2)
+                        .build()
+                ).build()
         }
     }
 
@@ -160,6 +185,7 @@ class AudioPreviewActivity : BaseActivity(), View.OnClickListener {
 
         prefs.registerOnSharedPreferenceChangeListener(prefChangeListener)
         updateSliderVisibility()
+        updateEarPreference()
 
         val seekBarProgressWavelength =
             resources.getDimensionPixelSize(R.dimen.media_seekbar_progress_wavelength).toFloat()
@@ -180,12 +206,11 @@ class AudioPreviewActivity : BaseActivity(), View.OnClickListener {
             it.animate = false
         }
         // TODO de-dupe
-        val rgAp = ReplayGainAudioProcessor()
         player = ExoPlayer.Builder(
             this,
             GramophoneRenderFactory(
                 this,
-                rgAp, {}, {})
+                rgAp, earPreferenceAp, {}, {})
                 .setEnableHighResolutionPcmOutput(true)
                 .setEnableDecoderFallback(true)
                 .setEnableAudioOutputPlaybackParameters(true)
@@ -214,7 +239,8 @@ class AudioPreviewActivity : BaseActivity(), View.OnClickListener {
                         TrackSelectionParameters.AudioOffloadPreferences.Builder()
                             .apply {
                                 val config = prefs.getStringStrict("offload", "0")?.toIntOrNull()
-                                if (config != null && config > 0 && Flags.OFFLOAD) {
+                                if (config != null && config > 0 && Flags.OFFLOAD &&
+                                    earPreferenceAp.mode == EarPreferenceAudioProcessor.Mode.OFF) {
                                     rgAp.setOffloadEnabled(true)
                                     setAudioOffloadMode(TrackSelectionParameters.AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_ENABLED)
                                     setIsGaplessSupportRequired(config == 2)

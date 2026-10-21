@@ -2,6 +2,11 @@
 <menu xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
     <item
+        android:id="@+id/asmr_online"
+        android:icon="@drawable/ic_headphones"
+        android:title="@string/asmr_online"
+        app:showAsAction="ifRoom" />
+    <item
         android:id="@+id/search"
         android:icon="@drawable/ic_search"
         android:title="@string/home_menu_search"

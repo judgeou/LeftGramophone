@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="settings_asmr">ASMR</string>
+    <string name="settings_asmr_ear_preference">自动声道切换</string>
+    <string name="settings_asmr_ear_preference_off">关闭</string>
+    <string name="settings_asmr_ear_preference_left">偏好左耳</string>
+    <string name="settings_asmr_ear_preference_right">偏好右耳</string>
+    <string name="settings_asmr_ear_preference_desc">播放立体声音频时，如果另一侧的声音明显更响，会自动交换左右声道，并平滑过渡。安静或左右接近的片段保持当前声道方向。设置在播放中生效。音量检测可能无法识别所有 ASMR 刺激。</string>
+</resources>

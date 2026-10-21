@@ -135,7 +135,9 @@ class GramophoneApplication : Application(), SingletonImageLoader.Factory,
                         else it
                     }
                     .penaltyLog()
-                    .penaltyDialog()
+                    // Vendor framework startup (for example Honor font loading) can do disk
+                    // I/O after Application.onCreate. Keep diagnostics without blocking launch
+                    // behind a dialog for every framework access.
                     .build()
             )
             StrictMode.setVmPolicy(
@@ -329,6 +331,7 @@ class GramophoneApplication : Application(), SingletonImageLoader.Factory,
                 add(CoilArtPipeline.AlbumThumbnailKeyer())
                 add(CoilArtPipeline.AudioCoverKeyer())
                 add(AndroidUriMapper())
+                add(org.akanework.gramophone.logic.asmr.AsmrArtworkFetcher())
                 add(CoilArtPipeline.ThumbnailMapper())
                 add(CoilArtPipeline.AudioCoverMapper())
                 add(CoilArtPipeline.AlbumThumbnailMapper())

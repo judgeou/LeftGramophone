@@ -800,11 +800,9 @@ class MainActivity : BaseActivity() {
                 updateLibrary()
             } else {
                 maybeReportFullyDrawn() // TODO: is this still needed?
-                Toast.makeText(this, getString(R.string.grant_audio), Toast.LENGTH_LONG).show()
-                val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
-                intent.setData("package:$packageName".toUri())
-                startActivity(intent)
-                finish()
+                // Online playback remains available without access to local audio.
+                updateLibrary(smartScanFirst = false)
+                startFragment(org.akanework.gramophone.ui.asmr.AsmrFragment())
             }
         }
     }

@@ -215,8 +215,12 @@ abstract class BaseAdapter<T : Any>(
                     @SuppressLint("NotifyDataSetChanged") notifyDataSetChanged()
                 if (sizeChanged) decorAdapter.updateSongCounter()
                 onListUpdated()
+                val onFullyDrawn = onFullyDrawnListener
                 recyclerView?.doOnLayout {
-                    recyclerView?.postOnAnimation { reportFullyDrawn() }
+                    recyclerView?.postOnAnimation {
+                        // An older layout must not complete a newer directory transition.
+                        if (onFullyDrawnListener === onFullyDrawn) reportFullyDrawn()
+                    }
                 }
             }
         repeatPausingWithLifecycle(fragment?.viewLifecycleOwner ?: fallbackContext!!,
@@ -295,8 +299,11 @@ abstract class BaseAdapter<T : Any>(
         super.onAttachedToRecyclerView(recyclerView)
         this.recyclerView = recyclerView
         if (list != null) {
+            val onFullyDrawn = onFullyDrawnListener
             recyclerView.doOnLayout {
-                recyclerView.postOnAnimation { reportFullyDrawn() }
+                recyclerView.postOnAnimation {
+                    if (onFullyDrawnListener === onFullyDrawn) reportFullyDrawn()
+                }
             }
         }
     }

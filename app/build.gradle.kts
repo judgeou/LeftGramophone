@@ -8,6 +8,14 @@ import java.util.Properties
 val aboutLibsVersion = "13.1.0" // keep in sync with plugin version
 val kotlinVersion = "2.3.0"
 
+val usePrebuiltNativeLibs = providers.gradleProperty("hificorePrebuiltDir").isPresent
+val externalApkSigning = providers.gradleProperty("externalApkSigning")
+    .map(String::toBoolean).getOrElse(false)
+val targetAbi = providers.gradleProperty("targetAbi").orNull
+require(targetAbi == null || targetAbi in setOf("arm64-v8a", "armeabi-v7a", "x86", "x86_64")) {
+    "Unsupported targetAbi: $targetAbi"
+}
+
 plugins {
     id("com.android.application")
     id("com.android.built-in-kotlin")
@@ -63,7 +71,7 @@ android {
 
     buildFeatures {
         buildConfig = true
-        prefab = true
+        prefab = !usePrebuiltNativeLibs
         compose = true
     }
 
@@ -73,6 +81,9 @@ android {
         }
         jniLibs {
             useLegacyPackaging = false
+            if (usePrebuiltNativeLibs) {
+                keepDebugSymbols += "**/*.so"
+            }
             // https://issuetracker.google.com/issues/168777344#comment11
             pickFirsts += "lib/arm64-v8a/libdlfunc.so"
             pickFirsts += "lib/armeabi-v7a/libdlfunc.so"
@@ -102,6 +113,9 @@ android {
 
     defaultConfig {
         applicationId = appIdOverride ?: "org.akanework.gramophone"
+        if (targetAbi != null) {
+            ndk.abiFilters += targetAbi
+        }
         minSdk = 23
         targetSdk = 37
         versionCode = 24
@@ -144,7 +158,8 @@ android {
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro",
             )
-            signingConfig = signingConfigs.getByName("release")
+            // Windows certificate-store signing is performed after APK packaging.
+            signingConfig = if (externalApkSigning) null else signingConfigs.getByName("release")
         }
         create("googlePlayRelease") {
             isMinifyEnabled = true
@@ -223,7 +238,8 @@ android {
             it.vcsInfo {
                 include = false
             }
-            if (project.hasProperty("AKANE_RELEASE_KEY_ALIAS") || project.hasProperty("signing2")) {
+            if (!(externalApkSigning && it.name == "release") &&
+                (project.hasProperty("AKANE_RELEASE_KEY_ALIAS") || project.hasProperty("signing2"))) {
                 it.signingConfig = signingConfigs[if (project.hasProperty("signing2"))
                     "release2" else "release"]
             }

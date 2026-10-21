@@ -69,6 +69,9 @@ import androidx.media3.common.util.Log
 import androidx.media3.common.util.Util
 import androidx.media3.common.util.Util.isBitmapFactorySupportedMimeType
 import androidx.media3.datasource.DefaultDataSource
+import androidx.media3.datasource.DefaultHttpDataSource
+import org.akanework.gramophone.logic.asmr.AsmrRepository
+import org.akanework.gramophone.logic.asmr.asmrWorkId
 import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.analytics.AnalyticsListener
@@ -122,6 +125,7 @@ import org.akanework.gramophone.logic.utils.AfFormatTracker
 import org.akanework.gramophone.logic.utils.AudioTrackInfo
 import org.akanework.gramophone.logic.utils.BtCodecInfo
 import org.akanework.gramophone.logic.utils.CircularShuffleOrder
+import org.akanework.gramophone.logic.utils.EarPreferenceAudioProcessor
 import org.akanework.gramophone.logic.utils.Flags
 import org.akanework.gramophone.logic.utils.LastPlayedManager
 import org.akanework.gramophone.logic.utils.LrcUtils.LrcParserOptions
@@ -224,6 +228,7 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
     private var lastSentNotificationLyric: String? = null
     private lateinit var afFormatTracker: AfFormatTracker
     private lateinit var rgAp: ReplayGainAudioProcessor
+    private lateinit var earPreferenceAp: EarPreferenceAudioProcessor
     private var rgMode = 0 // 0 = disabled, 1 = track, 2 = album, 3 = smart
     private var updatedLyricAtLeastOnce = false
     private val downstreamFormat = hashSetOf<Pair<Any, Pair<Int, Format>>>()
@@ -405,6 +410,7 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
             }
         }
         rgAp = ReplayGainAudioProcessor()
+        earPreferenceAp = EarPreferenceAudioProcessor()
         prefs.registerOnSharedPreferenceChangeListener(this)
         onSharedPreferenceChanged(prefs, null) // read initial values
         val player = EndedWorkaroundPlayer(
@@ -413,7 +419,7 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
             exoPlayer = ExoPlayer.Builder(
                 this,
                 GramophoneRenderFactory(
-                    this, rgAp, this::onAudioSinkInputFormatChanged,
+                    this, rgAp, earPreferenceAp, this::onAudioSinkInputFormatChanged,
                     afFormatTracker::setAudioSink
                 )
                     .setEnableHighResolutionPcmOutput(true)
@@ -421,7 +427,10 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
                     .setEnableAudioOutputPlaybackParameters(true)
                     .setExtensionRendererMode(DefaultRenderersFactory.EXTENSION_RENDERER_MODE_ON),
                 GramophoneMediaSourceFactory(
-                    DefaultDataSource.Factory(this),
+                    DefaultDataSource.Factory(this, DefaultHttpDataSource.Factory()
+                        .setUserAgent("Gramophone-ASMR/1.0")
+                        .setDefaultRequestProperties(mapOf("Referer" to "https://www.asmr.one/"))
+                        .setConnectTimeoutMs(15_000).setReadTimeoutMs(30_000)),
                     GramophoneExtractorsFactory().also {
                         it.setConstantBitrateSeekingEnabled(true)
                         it.setMp3ExtractorFlags(Mp3Extractor.FLAG_ENABLE_INDEX_SEEKING)
@@ -445,7 +454,8 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
                                 .apply {
                                     val config =
                                         prefs.getStringStrict("offload", "0")?.toIntOrNull()
-                                    if (config != null && config > 0 && Flags.OFFLOAD) {
+                                    if (config != null && config > 0 && Flags.OFFLOAD &&
+                                        earPreferenceAp.mode == EarPreferenceAudioProcessor.Mode.OFF) {
                                         rgAp.setOffloadEnabled(true)
                                         setAudioOffloadMode(TrackSelectionParameters.AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_ENABLED)
                                         setIsGaplessSupportRequired(config == 2)
@@ -715,6 +725,19 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
             return Futures.immediateFuture(SessionResult(
                 SessionResult.RESULT_ERROR_BAD_VALUE))
         }
+        if (mediaId.startsWith("asmr:")) {
+            val player = session.player
+            val workId = (0 until player.mediaItemCount).map(player::getMediaItemAt)
+                .find { it.mediaId == mediaId }?.asmrWorkId()
+                ?: return Futures.immediateFuture(SessionResult(SessionResult.RESULT_ERROR_BAD_VALUE))
+            AsmrRepository(this).saveId(workId, rating.isHeart)
+            for (index in 0 until player.mediaItemCount) {
+                val item = player.getMediaItemAt(index)
+                if (item.asmrWorkId() == workId) player.replaceMediaItem(index, item.buildUpon()
+                    .setMediaMetadata(item.mediaMetadata.buildUpon().setUserRating(rating).build()).build())
+            }
+            return Futures.immediateFuture(SessionResult(SessionResult.RESULT_SUCCESS))
+        }
         val completion = SettableFuture.create<SessionResult>()
         lifecycleScope.launch(Dispatchers.Default) {
             val item = gramophoneApplication.reader.songListFlow.map {
@@ -910,6 +933,27 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
 
     override fun onSharedPreferenceChanged(sharedPreferences: SharedPreferences, key: String?) {
         var restart = false
+        if (key == null || key == "asmr_ear_preference") {
+            earPreferenceAp.mode = EarPreferenceAudioProcessor.Mode.fromPreference(
+                prefs.getStringStrict("asmr_ear_preference", "off")
+            )
+            // Offloaded compressed audio bypasses PCM processors. Update the selection if needed.
+            endedWorkaroundPlayer?.exoPlayer?.let { player ->
+                val config = prefs.getStringStrict("offload", "0")?.toIntOrNull() ?: 0
+                val offload = Flags.OFFLOAD && config > 0 &&
+                    earPreferenceAp.mode == EarPreferenceAudioProcessor.Mode.OFF
+                rgAp.setOffloadEnabled(offload)
+                player.trackSelectionParameters = player.trackSelectionParameters.buildUpon()
+                    .setAudioOffloadPreferences(
+                        TrackSelectionParameters.AudioOffloadPreferences.Builder()
+                            .setAudioOffloadMode(if (offload)
+                                TrackSelectionParameters.AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_ENABLED
+                                else TrackSelectionParameters.AudioOffloadPreferences.AUDIO_OFFLOAD_MODE_DISABLED)
+                            .setIsGaplessSupportRequired(config == 2)
+                            .build()
+                    ).build()
+            }
+        }
         if (key == null || key == "notification_lyrics" || key == "status_bar_lyrics") {
             scheduleSendingLyrics(false)
             endedWorkaroundPlayer?.updateLyricNow()
@@ -1574,10 +1618,14 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
     }
 
     override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+        val streaming = mediaItem?.localConfiguration?.uri?.scheme in setOf("http", "https")
+        endedWorkaroundPlayer?.exoPlayer?.setWakeMode(if (streaming) C.WAKE_MODE_NETWORK else C.WAKE_MODE_LOCAL)
         if (reason != Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT) {
             bitrate = null
             bitrateFetcher.launch {
-                bitrate = mediaItem?.getBitrate(this@GramophonePlaybackService) // TODO subtract cover size
+                // Stream format information comes from ExoPlayer; a metadata retriever would
+                // open a second network stream solely to inspect the bitrate.
+                bitrate = if (streaming) null else mediaItem?.getBitrate(this@GramophonePlaybackService)
                 this@GramophonePlaybackService.mediaSession?.broadcastCustomCommand(
                     SessionCommand(SERVICE_GET_AUDIO_FORMAT, Bundle.EMPTY),
                     Bundle.EMPTY
@@ -1669,12 +1717,13 @@ class GramophonePlaybackService : MediaLibraryService(), MediaSessionService.Lis
     }
 
     private suspend fun mapMediaItemsForFavorites(mediaItems: List<MediaItem>): List<MediaItem> {
+        val online = AsmrRepository(this)
         val favorites = gramophoneApplication.reader.playlistListFlow.map { it.find { p ->
             p is Favorite } }.first()?.songList?.map { it.mediaId } ?: emptyList()
         return mediaItems.map { item ->
             val isHeart = (item.mediaMetadata.userRating as? HeartRating)
                 ?.isHeart == true
-            val shouldBeHeart = favorites.contains(item.mediaId)
+            val shouldBeHeart = item.asmrWorkId()?.let(online::isSaved) ?: favorites.contains(item.mediaId)
             if (isHeart != shouldBeHeart ||
                 item.mediaMetadata.userRating !is HeartRating) {
                 item.buildUpon().setMediaMetadata(item.mediaMetadata.buildUpon().setUserRating(

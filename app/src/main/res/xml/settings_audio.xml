@@ -31,6 +31,27 @@
     </PreferenceCategory>
 
     <PreferenceCategory
+        android:title="@string/settings_asmr"
+        app:iconSpaceReserved="false">
+
+        <DropDownPreference
+            android:defaultValue="off"
+            android:entries="@array/asmr_ear_preference_entries"
+            android:entryValues="@array/asmr_ear_preference_values"
+            android:key="asmr_ear_preference"
+            android:layout="@layout/preference_dropdown_md"
+            android:title="@string/settings_asmr_ear_preference"
+            app:iconSpaceReserved="false"
+            app:useSimpleSummaryProvider="true" />
+
+        <Preference
+            android:icon="@drawable/ic_info"
+            android:layout="@layout/preference_basic"
+            android:summary="@string/settings_asmr_ear_preference_desc" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory
         android:key="rg_boost_gain_category"
         android:title="@string/settings_replaygain_boost"
         app:iconSpaceReserved="false">

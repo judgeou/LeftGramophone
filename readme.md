@@ -30,6 +30,46 @@ A sane music player built with media3 and the Material Design library that is fo
   - Supports word/syllable Karaoke lyrics synchronization
 - Full support for ReplayGain 2.0
 - Support for system/third-party Equalizer apps
+- ASMR ear preference: automatically route the louder stereo side to the left or right ear
+- ASMR Online: native browsing and streaming, with an in-app full-site view
+
+### ASMR ear preference
+
+Open **Settings > Audio > ASMR > Automatic channel swapping** and select **Prefer left ear**
+or **Prefer right ear**. The default is **Off**, and changes apply during playback.
+The processor compares original stereo channel energy in 20 ms windows. A roughly 3 dB
+imbalance sustained for 60 ms triggers a swap or a return to the original direction, with
+a 10 ms crossfade. Quiet passages below -60 dBFS and balanced passages hold the current
+direction to avoid repeated switching. Mono and surround audio pass through unchanged.
+Stable routing preserves the original PCM samples; only transitions blend the channels.
+Loudness is a heuristic for ear-directed ASMR and cannot identify every trigger, especially
+when equally loud background sound masks it. Audio offload is disabled while this feature is active.
+
+### ASMR Online
+
+Open the **headphones button > ASMR Online** from the library toolbar. The native interface
+supports paged discovery and search, sorting, subtitle filtering, tags, voice actors, circles,
+work folders, per-file downloads, and online playlist browsing. Native account dialogs support
+sign-in and registration when the server allows it, creating private/unlisted/public playlists,
+adding and removing works from online favorites and playlists, and editing or deleting your
+rating, review, and listening-progress mark. Select a folder before playing
+to keep alternate formats and language editions in separate queues. The channel preference
+controls are available directly above the online library and apply during playback.
+
+Streams use Gramophone's existing player, audio processing, queue, sleep timer, background
+service, and lock-screen controls. Local audio permission is optional for online playback.
+Device bookmarks are labeled **Saved on device**; online favorites and playlists are available
+under **Online playlists** after signing in. Every ASMR screen uses native Compose components
+and connects directly to the API. The app contains no embedded website or JavaScript playback bridge.
+Renaming/deleting existing online playlists and the site's other community tools are not implemented yet.
+
+Use **Account and server** to sign in or change the HTTPS API origin. Passwords are not saved;
+session tokens are encrypted with Android Keystore and excluded from backups. Changing servers
+signs out the native account. API credentials are never sent to artwork or audio hosts.
+
+Integration tests use representative API responses and fake HTTPS connections. Live API access
+and account flows require verification on a connected Android device and a network that can
+reach the selected server; they are not covered by those JVM tests.
 
 ## Screenshots
 | ![Screenshot 1](https://raw.githubusercontent.com/FoedusProgramme/Gramophone/beta/fastlane/metadata/android/en-US/images/phoneScreenshots/screenshot_1.jpg) | ![Screenshot 2](https://raw.githubusercontent.com/FoedusProgramme/Gramophone/beta/fastlane/metadata/android/en-US/images/phoneScreenshots/screenshot_2.jpg) | ![Screenshot 3](https://raw.githubusercontent.com/FoedusProgramme/Gramophone/beta/fastlane/metadata/android/en-US/images/phoneScreenshots/screenshot_3.jpg) |

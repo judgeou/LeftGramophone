@@ -26,7 +26,10 @@ import android.widget.TextView
 import androidx.activity.BackEventCompat
 import androidx.activity.OnBackPressedCallback
 import androidx.core.view.doOnLayout
+import androidx.core.view.doOnNextLayout
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.DefaultLifecycleObserver
+import androidx.lifecycle.LifecycleOwner
 import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.ConcatAdapter
 import androidx.recyclerview.widget.DefaultItemAnimator
@@ -51,6 +54,7 @@ import org.akanework.gramophone.logic.comparators.SupportComparator
 import org.akanework.gramophone.logic.emitOrDie
 import org.akanework.gramophone.logic.getStringStrict
 import org.akanework.gramophone.logic.ui.DefaultItemHeightHelper
+import org.akanework.gramophone.logic.ui.FolderScrollState
 import org.akanework.gramophone.logic.ui.ItemHeightHelper
 import org.akanework.gramophone.logic.ui.MyRecyclerView
 import org.akanework.gramophone.logic.utils.flows.PauseManagingSharedFlow.Companion.sharePauseableIn
@@ -58,7 +62,6 @@ import org.akanework.gramophone.ui.MainActivity
 import org.akanework.gramophone.ui.fragments.AdapterFragment
 import org.akanework.gramophone.ui.getAdapterType
 import uk.akane.libphonograph.items.FileNode
-import java.util.concurrent.atomic.AtomicInteger
 
 class DetailedFolderAdapter(
     private val fragment: Fragment,
@@ -107,6 +110,7 @@ class DetailedFolderAdapter(
     )
     private var fileNodePath = MutableStateFlow<List<String>?>(savedInstanceState
         ?.getStringArrayList("Path"))
+    private val scrollState = FolderScrollState(savedInstanceState)
     val qTitle = fileNodePath.map { it?.lastOrNull() ?: "/" }
     private val liveData = if (isDetailed) mainActivity.reader.folderStructureFlow
     else mainActivity.reader.shallowFolderFlow
@@ -207,13 +211,60 @@ class DetailedFolderAdapter(
         )
     }
     private var recyclerView: MyRecyclerView? = null
+    private var changingDirectory = false
+    private val backCallback = object : OnBackPressedCallback(false) {
+        private var backProgress = 0f
+
+        override fun handleOnBackStarted(backEvent: BackEventCompat) {
+            backProgress = 0f
+        }
+
+        override fun handleOnBackProgressed(backEvent: BackEventCompat) {
+            if (changingDirectory) return
+            val rv = recyclerView ?: return
+            backProgress = backEvent.progress
+            rv.translationX = backProgress * rv.width * 0.3f
+            rv.alpha = 1f - backProgress * 0.3f
+        }
+
+        override fun handleOnBackCancelled() {
+            backProgress = 0f
+            if (changingDirectory) return
+            recyclerView?.animate()
+                ?.translationX(0f)
+                ?.alpha(1f)
+                ?.setDuration(150)
+                ?.start()
+        }
+
+        override fun handleOnBackPressed() {
+            enter(null, backProgress)
+            backProgress = 0f
+        }
+    }
 
     init {
         decorAdapter.jumpDownPos =
             { decorAdapter.itemCount + folderPopAdapter.itemCount + folderAdapter.itemCount }
+        mainActivity.onBackPressedDispatcher.addCallback(fragment.viewLifecycleOwner, backCallback)
+        fragment.viewLifecycleOwner.lifecycle.addObserver(object : DefaultLifecycleObserver {
+            override fun onResume(owner: LifecycleOwner) {
+                updateBackCallback()
+            }
+
+            override fun onPause(owner: LifecycleOwner) {
+                backCallback.isEnabled = false
+            }
+        })
+    }
+
+    private fun updateBackCallback() {
+        backCallback.isEnabled = fragment.isResumed &&
+                (changingDirectory || !fileNodePath.value.isNullOrEmpty())
     }
 
     override fun onAttachedToRecyclerView(recyclerView: MyRecyclerView) {
+        if (this.recyclerView === recyclerView) return
         super.onAttachedToRecyclerView(recyclerView)
         this.recyclerView = recyclerView
         this.scope = CoroutineScope(Dispatchers.Default)
@@ -233,9 +284,11 @@ class DetailedFolderAdapter(
                         @Suppress("NotifyDataSetChanged")
                         folderAdapter.notifyDataSetChanged()
                     decorAdapter.updateSongCounter()
+                    val onFullyDrawn = folderAdapter.onFullyDrawnListener
                     this@DetailedFolderAdapter.recyclerView?.doOnLayout {
                         this@DetailedFolderAdapter.recyclerView?.postOnAnimation {
-                            folderAdapter.reportFullyDrawn()
+                            if (folderAdapter.onFullyDrawnListener === onFullyDrawn)
+                                folderAdapter.reportFullyDrawn()
                         }
                     }
                 }
@@ -245,40 +298,53 @@ class DetailedFolderAdapter(
             fileNodePath.collect {
                 withContext(Dispatchers.Main) {
                     folderPopAdapter.enabled = !it.isNullOrEmpty()
+                    updateBackCallback()
                 }
             }
         }
     }
 
     override fun onDetachedFromRecyclerView(recyclerView: MyRecyclerView) {
+        if (this.recyclerView !== recyclerView) return
         super.onDetachedFromRecyclerView(recyclerView)
-        scope!!.cancel()
+        scope?.cancel()
         scope = null
+        this.recyclerView = null
+        recyclerView.clearAnimation()
+        recyclerView.animate().cancel()
+        recyclerView.translationX = 0f
+        recyclerView.alpha = 1f
+        recyclerView.itemAnimator = DefaultItemAnimator()
+        folderAdapter.onFullyDrawnListener = null
+        songAdapter.onFullyDrawnListener = null
+        changingDirectory = false
+        backCallback.isEnabled = false
     }
 
     fun onSaveInstanceState(outState: Bundle) {
         val path = fileNodePath.replayCache.firstOrNull()
         if (path != null) {
             outState.putStringArrayList("Path", ArrayList(path))
+            if (!changingDirectory) scrollState.save(path, recyclerView?.layoutManager)
         }
+        scrollState.onSaveInstanceState(outState)
     }
 
     override fun onTabReselected() {
         songAdapter.onTabReselected()
     }
 
-    fun enter(path: String?) {
+    fun enter(path: String?) = enter(path, null)
+
+    private fun enter(path: String?, backProgress: Float?) {
+        if (changingDirectory) return
         val currentPath = fileNodePath.replayCache.firstOrNull() ?: return
-        if (path != null) {
-            update(false) {
-                fileNodePath.emitOrDie(currentPath + path)
-            }
-        } else if (currentPath.isNotEmpty()) {
-            update(true) {
-                // Remove last
-                fileNodePath.emitOrDie(currentPath.subList(0, currentPath.size - 1))
-            }
-        }
+        val nextPath = if (path != null) currentPath + path
+        else if (currentPath.isNotEmpty()) currentPath.dropLast(1)
+        else return
+        recyclerView?.stopScroll()
+        scrollState.save(currentPath, recyclerView?.layoutManager)
+        update(nextPath, path == null, backProgress)
     }
 
     override fun sort(type: Sorter.Type) {
@@ -305,136 +371,70 @@ class DetailedFolderAdapter(
                 && oldList[oldItemPosition].songList.size == newList[newItemPosition].songList.size
     }
 
-    private fun update(invertedDirection: Boolean, doUpdate: () -> Unit) {
-        recyclerView.let {
-            if (it == null) {
-                doUpdate()
-                return@let
+    private fun update(nextPath: List<String>, invertedDirection: Boolean, backProgress: Float?) {
+        val rv = recyclerView
+        if (rv == null) {
+            fileNodePath.emitOrDie(nextPath)
+            return
+        }
+        changingDirectory = true
+        updateBackCallback()
+        rv.clearAnimation()
+        rv.animate().cancel()
+        val applyPath = {
+            rv.translationX = 0f
+            rv.alpha = 0f
+            rv.itemAnimator = null
+            var listsDrawn = 0
+            val onListDrawn = {
+                listsDrawn++
+                if (listsDrawn == 2 && recyclerView === rv) {
+                    // Both folder and song counts must be final before restoring the anchor.
+                    scrollState.restore(nextPath, rv.layoutManager)
+                    rv.doOnNextLayout {
+                        if (recyclerView === rv) {
+                            rv.alpha = 1f
+                            rv.itemAnimator = DefaultItemAnimator()
+                            changingDirectory = false
+                            updateBackCallback()
+                            rv.startAnimation(
+                                AnimationUtils.loadAnimation(
+                                    rv.context,
+                                    if (invertedDirection) R.anim.slide_in_left else R.anim.slide_in_right
+                                )
+                            )
+                        }
+                    }
+                    rv.requestLayout()
+                }
             }
+            songAdapter.onFullyDrawnListener = onListDrawn
+            folderAdapter.onFullyDrawnListener = onListDrawn
+            folderPopAdapter.enabled = nextPath.isNotEmpty()
+            fileNodePath.emitOrDie(nextPath)
+        }
+        if (backProgress != null) {
+            rv.animate()
+                .translationX(rv.width * 0.3f)
+                .alpha(0f)
+                .setDuration((150 * (1f - backProgress)).toLong().coerceAtLeast(50))
+                .withEndAction { applyPath() }
+                .start()
+        } else {
             val animation = AnimationUtils.loadAnimation(
-                it.context,
+                rv.context,
                 if (invertedDirection) R.anim.slide_out_right else R.anim.slide_out_left
             )
             animation.setAnimationListener(object : Animation.AnimationListener {
                 override fun onAnimationStart(animation: Animation) {}
                 override fun onAnimationEnd(animation: Animation) {
-                    it.alpha = 0f
-                    it.itemAnimator = null
-                    val i = AtomicInteger(2)
-                    if (songAdapter.onFullyDrawnListener != null)
-                        throw IllegalStateException("unexpected onFullyDrawnListener")
-                    val next = {
-                        it.alpha = 1f
-                        it.itemAnimator = DefaultItemAnimator()
-                        it.startAnimation(
-                            AnimationUtils.loadAnimation(
-                                it.context,
-                                if (invertedDirection) R.anim.slide_in_left else R.anim.slide_in_right
-                            )
-                        )
-                    }
-                    songAdapter.onFullyDrawnListener = {
-                        if (i.decrementAndGet() == 0) next()
-                    }
-                    folderAdapter.onFullyDrawnListener = {
-                        if (i.decrementAndGet() == 0) next()
-                    }
-                    doUpdate()
+                    if (recyclerView === rv) applyPath()
                 }
 
                 override fun onAnimationRepeat(animation: Animation) {}
             })
-            it.startAnimation(animation)
+            rv.startAnimation(animation)
         }
-        fragment.requireActivity().onBackPressedDispatcher.addCallback(
-            fragment.viewLifecycleOwner,
-            object : OnBackPressedCallback(true) {
-
-                private var backProgress = 0f
-                private var committed = false
-
-                override fun handleOnBackStarted(backEvent: BackEventCompat) {
-                    backProgress = 0f
-                    committed = false
-                }
-
-                override fun handleOnBackProgressed(backEvent: BackEventCompat) {
-                    val rv = recyclerView ?: return
-                    val width = rv.width.toFloat()
-                    if (width <= 0f) return
-                    backProgress = backEvent.progress
-
-                    val direction = 1f
-                    rv.translationX = direction * backProgress * width * 0.3f
-                    rv.alpha = 1f - backProgress * 0.3f
-                }
-
-                override fun handleOnBackCancelled() {
-                    recyclerView?.animate()
-                        ?.translationX(0f)
-                        ?.alpha(1f)
-                        ?.setDuration(150)
-                        ?.start()
-                }
-
-                override fun handleOnBackPressed() {
-                    if (committed) return
-                    committed = true
-                    recyclerView.let {
-                        if (it == null) {
-                            doUpdate()
-                            return@let
-                        }
-                        if (!fileNodePath.value.isNullOrEmpty()) {
-                            val width = it.width.toFloat()
-                            val remainingFraction = 1f - backProgress
-                            val duration = (150 * remainingFraction).toLong().coerceAtLeast(50)
-
-                            it.animate()
-                                .translationX(width * 0.3f)
-                                .alpha(0f)
-                                .setDuration(duration)
-                                .withEndAction {
-                                    it.translationX = 0f
-                                    it.alpha = 0f
-
-                                    it.itemAnimator = null
-                                    val i = AtomicInteger(2)
-                                    val next = {
-                                        it.alpha = 1f
-                                        it.itemAnimator = DefaultItemAnimator()
-                                        it.startAnimation(
-                                            AnimationUtils.loadAnimation(
-                                                it.context,
-                                                R.anim.slide_in_left
-                                            )
-                                        )
-                                    }
-                                    songAdapter.onFullyDrawnListener = {
-                                        if (i.decrementAndGet() == 0) next()
-                                    }
-                                    folderAdapter.onFullyDrawnListener = {
-                                        if (i.decrementAndGet() == 0) next()
-                                    }
-                                    val currentPath = fileNodePath.replayCache.firstOrNull() ?: return@withEndAction
-                                    fileNodePath.emitOrDie(currentPath.subList(0, currentPath.size - 1))
-                                }
-                                .start()
-                        } else {
-                            it.animate()
-                                .translationX(0f)
-                                .alpha(1f)
-                                .setDuration(150)
-                                .withEndAction {
-                                    isEnabled = false
-                                    fragment.requireActivity().onBackPressedDispatcher.onBackPressed()
-                                }
-                                .start()
-                        }
-                    }
-                }
-            }
-        )
     }
 
     override fun getPopupText(view: View, position: Int): CharSequence {

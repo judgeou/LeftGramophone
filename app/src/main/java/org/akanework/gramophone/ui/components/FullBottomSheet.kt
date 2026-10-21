@@ -72,6 +72,7 @@ import androidx.core.widget.addTextChangedListener
 import androidx.lifecycle.ViewModel
 import androidx.media3.common.C
 import androidx.media3.common.HeartRating
+import org.akanework.gramophone.logic.asmr.asmrWorkId
 import androidx.media3.common.MediaItem
 import androidx.media3.common.MediaMetadata
 import androidx.media3.common.PlaybackParameters
@@ -351,12 +352,14 @@ class FullBottomSheet
         }
 
         bottomSheetFullCover.setOnClickListener {
+            if (openOnlineWork()) return@setOnClickListener
             activity.startFragment(DetailDialogFragment()) {
                 putString("Id", instance?.currentMediaItem?.mediaId)
             }
         }
 
         bottomSheetFullTitle.setOnClickListener {
+            if (openOnlineWork()) return@setOnClickListener
             minimize?.invoke()
             activity.startFragment(GeneralSubFragment()) {
                 putString("Id", instance?.currentMediaItem?.mediaMetadata?.albumId?.toString())
@@ -378,6 +381,7 @@ class FullBottomSheet
         }
 
         bottomSheetFullSubtitle.setOnClickListener {
+            if (openOnlineWork()) return@setOnClickListener
             minimize?.invoke()
             activity.startFragment(ArtistSubFragment()) {
                 putString("Id", instance?.currentMediaItem?.mediaMetadata?.artistId?.toString())
@@ -1484,11 +1488,25 @@ class FullBottomSheet
 
     override fun onCheckedChanged(button: MaterialButton?, isChecked: Boolean) {
         instance?.currentMediaItem?.let { song ->
+            if (song.mediaId.startsWith("asmr:")) {
+                instance?.setRating(HeartRating(isChecked))
+                return@let
+            }
             val entry = Entry.ofMediaItem(song)
             if (entry != null)
                 activity.markIsFavoriteStatus(listOf(entry), isChecked)
         }
         bottomSheetFavoriteButton.removeOnCheckedChangeListener(this) // see onMediaMetadataChanged
+    }
+
+    private fun openOnlineWork(): Boolean {
+        val song = instance?.currentMediaItem ?: return false
+        if (!song.mediaId.startsWith("asmr:")) return false
+        minimize?.invoke()
+        activity.startFragment(org.akanework.gramophone.ui.asmr.AsmrFragment()) {
+            putString("work", song.asmrWorkId())
+        }
+        return true
     }
 
     override fun onPositionDiscontinuity(

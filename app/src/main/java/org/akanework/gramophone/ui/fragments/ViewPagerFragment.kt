@@ -92,6 +92,10 @@ class ViewPagerFragment : BaseFragment(true) {
         topAppBar.setOnMenuItemClickListener { it ->
             val activity = requireActivity() as MainActivity
             when (it.itemId) {
+                R.id.asmr_online -> {
+                    activity.startFragment(org.akanework.gramophone.ui.asmr.AsmrFragment())
+                }
+
                 R.id.search -> {
                     activity.startFragment(SearchFragment())
                 }
